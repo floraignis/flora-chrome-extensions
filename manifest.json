@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Flora OF Uploader",
+  "description": "Batch upload photos and videos to OnlyFans in a custom order.",
+  "version": "1.1.0",
+  "permissions": ["activeTab"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {},
+  "content_scripts": [
+    {
+      "matches": ["https://onlyfans.com/*"],
+      "js": ["content.js"],
+      "css": ["style.css"]
+    }
+  ]
+}
