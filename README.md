@@ -1,5 +1,7 @@
 # Flora OF Uploader
 
+![Preview](img/preview.png)
+
 Chrome extension for batch uploading photos and videos to OnlyFans in a custom order.
 
 ## Features
