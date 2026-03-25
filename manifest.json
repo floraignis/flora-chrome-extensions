@@ -1,16 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Flora OF Uploader",
-  "description": "Batch upload photos and videos to OnlyFans in a custom order.",
-  "version": "1.1.0",
-  "permissions": ["activeTab"],
+  "description": "Batch upload photos and videos to OnlyFans and Fansly in a custom order.",
+  "version": "1.2.0",
+  "permissions": ["activeTab", "scripting"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {},
   "content_scripts": [
     {
-      "matches": ["https://onlyfans.com/*"],
+      "matches": ["https://onlyfans.com/*", "https://fansly.com/*"],
       "js": ["content.js"],
       "css": ["style.css"]
     }
