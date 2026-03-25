@@ -1,12 +1,25 @@
 (function () {
+  window.__floraAbort__?.();
+  document.getElementById('of-smart-uploader')?.remove();
+
   const PANEL_ID = 'of-smart-uploader';
-  const SELECTORS = {
-    fileInput: 'input[type="file"]',
-    attachBtn: '#attach_file_photo, .attach_file',
-  };
   const RETRY_ATTEMPTS = 10;
   const RETRY_DELAY_MS = 200;
   const SUCCESS_RESET_MS = 3000;
+
+  const SITE = location.hostname.includes('fansly.com') ? {
+    fileInput: 'app-post-creation input[type="file"]',
+    attachBtn: 'app-post-creation .fa-image',
+    uploadNewItem: 'app-post-creation .dropdown-item',
+    canUpload: () => !!document.querySelector('app-post-creation'),
+    notReadyMsg: 'Post creation form not found.',
+  } : {
+    fileInput: 'input[type="file"]',
+    attachBtn: '#attach_file_photo, .attach_file',
+    uploadNewItem: null,
+    canUpload: () => location.href.includes('/posts/create'),
+    notReadyMsg: 'Open "New Post" on OnlyFans first.',
+  };
 
   let panel = null;
   let filesQueue = [];
@@ -58,12 +71,16 @@
     `;
     document.body.appendChild(panel);
     eventsController = new AbortController();
+    window.__floraAbort__ = () => eventsController.abort();
     bindEvents();
 
-    new ResizeObserver(([entry]) => {
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      if (!panel) return;
       const size = Math.round(Math.min(Math.max(entry.contentRect.width * 0.13, 50), 120));
       panel.style.setProperty('--preview-size', `${size}px`);
-    }).observe(panel);
+    });
+    resizeObserver.observe(panel);
+    eventsController.signal.addEventListener('abort', () => resizeObserver.disconnect());
 
     panel.querySelector('.of-resize-handle').addEventListener('mousedown', (e) => {
       e.preventDefault();
@@ -90,7 +107,6 @@
 
   function bindEvents() {
     document.getElementById('of-close').onclick = closePanel;
-
     document.getElementById('of-clear').onclick = clearQueue;
     document.getElementById('of-reverse').onclick = reverseOrder;
     document.getElementById('of-upload').onclick = handleUpload;
@@ -110,25 +126,29 @@
       if (!e.target.classList.contains('order-input')) return;
       const idx = parseInt(e.target.dataset.id, 10);
       const value = parseInt(e.target.value, 10);
-      if (!isNaN(idx) && value > 0) {
-        filesQueue[idx].order = value;
-        renderFiles();
-      }
+      if (isNaN(idx) || isNaN(value)) return;
+      const item = filesQueue[idx];
+      if (!item) return;
+      const sorted = getSorted();
+      const clamped = Math.min(Math.max(value, 1), filesQueue.length);
+      sorted.splice(sorted.indexOf(item), 1);
+      sorted.splice(clamped - 1, 0, item);
+      sorted.forEach((f, i) => { f.order = i + 1; });
+      renderFiles();
     };
 
     fileList.onclick = (e) => {
       const btn = e.target.closest('[data-action]');
       if (btn) {
         const i = parseInt(btn.dataset.sortedIdx, 10);
+        if (btn.dataset.action === 'remove') { removeFile(i); return; }
         moveItem(i, btn.dataset.action === 'move-up' ? -1 : 1);
         return;
       }
-
       const info = e.target.closest('.file-info');
       if (info) {
-        const row = info.closest('.file-item');
-        const idx = parseInt(row.dataset.sortedIdx, 10);
-        const sorted = filesQueue.slice().sort((a, b) => a.order - b.order);
+        const idx = parseInt(info.closest('.file-item').dataset.sortedIdx, 10);
+        const sorted = getSorted();
         selectedItem = selectedItem === sorted[idx] ? null : sorted[idx];
         renderFiles();
       }
@@ -138,15 +158,29 @@
       if (!selectedItem || !panel) return;
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
       e.preventDefault();
-      const sorted = filesQueue.slice().sort((a, b) => a.order - b.order);
+      const sorted = getSorted();
       const i = sorted.indexOf(selectedItem);
-      if (i === -1) return;
-      moveItem(i, e.key === 'ArrowUp' ? -1 : 1);
+      if (i !== -1) moveItem(i, e.key === 'ArrowUp' ? -1 : 1);
     }, { signal: eventsController.signal });
   }
 
+  function getSorted() {
+    return filesQueue.slice().sort((a, b) => a.order - b.order);
+  }
+
+  function removeFile(sortedIdx) {
+    const sorted = getSorted();
+    const item = sorted[sortedIdx];
+    if (!item) return;
+    if (item.preview) URL.revokeObjectURL(item.preview);
+    if (selectedItem === item) selectedItem = null;
+    filesQueue.splice(filesQueue.indexOf(item), 1);
+    filesQueue.sort((a, b) => a.order - b.order).forEach((f, i) => { f.order = i + 1; });
+    renderFiles();
+  }
+
   function moveItem(sortedIdx, direction) {
-    const sorted = filesQueue.slice().sort((a, b) => a.order - b.order);
+    const sorted = getSorted();
     const target = sortedIdx + direction;
     if (target < 0 || target >= sorted.length) return;
     [sorted[sortedIdx].order, sorted[target].order] = [sorted[target].order, sorted[sortedIdx].order];
@@ -173,8 +207,7 @@
 
   function reverseOrder() {
     if (filesQueue.length < 2) return;
-    filesQueue.sort((a, b) => a.order - b.order).reverse();
-    filesQueue.forEach((item, i) => { item.order = i + 1; });
+    filesQueue.sort((a, b) => a.order - b.order).reverse().forEach((item, i) => { item.order = i + 1; });
     renderFiles();
   }
 
@@ -183,8 +216,7 @@
     if (!list) return;
     list.innerHTML = '';
 
-    const sorted = filesQueue.slice().sort((a, b) => a.order - b.order);
-
+    const sorted = getSorted();
     sorted.forEach((item, index) => {
       const row = document.createElement('div');
       row.className = 'file-item' + (item === selectedItem ? ' file-item--selected' : '');
@@ -201,6 +233,13 @@
         preview.classList.add('file-preview--placeholder');
         preview.textContent = item.isHeic ? 'HEIC' : item.isVideo ? 'VIDEO' : 'FILE';
       }
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'remove-btn';
+      removeBtn.textContent = '🗑';
+      removeBtn.title = 'Remove from queue';
+      removeBtn.dataset.action = 'remove';
+      removeBtn.dataset.sortedIdx = index;
 
       const info = document.createElement('div');
       info.className = 'file-info';
@@ -231,7 +270,7 @@
       arrows.className = 'move-btns';
       arrows.append(upBtn, downBtn);
 
-      row.append(preview, info, input, arrows);
+      row.append(preview, removeBtn, info, input, arrows);
       list.appendChild(row);
     });
   }
@@ -239,28 +278,32 @@
   async function handleUpload() {
     const btn = document.getElementById('of-upload');
 
-    if (filesQueue.length === 0) {
-      setStatus('Queue is empty.', 'error');
-      return;
-    }
-    if (!window.location.href.includes('/posts/create')) {
-      setStatus('Open "New Post" on OnlyFans first.', 'error');
-      return;
-    }
+    if (filesQueue.length === 0) { setStatus('Queue is empty.', 'error'); return; }
+    if (!SITE.canUpload()) { setStatus(SITE.notReadyMsg, 'error'); return; }
 
     btn.disabled = true;
     setStatus('Looking for upload field…');
 
-    let fileInput = document.querySelector(SELECTORS.fileInput);
+    let fileInput = document.querySelector(SITE.fileInput);
 
-    if (!fileInput) {
-      const attachBtn = document.querySelector(SELECTORS.attachBtn);
+    if (!fileInput && SITE.attachBtn) {
+      const attachBtn = document.querySelector(SITE.attachBtn);
       if (attachBtn) {
         attachBtn.click();
         for (let i = 0; i < RETRY_ATTEMPTS && !fileInput; i++) {
           await delay(RETRY_DELAY_MS);
-          fileInput = document.querySelector(SELECTORS.fileInput);
+          fileInput = document.querySelector(SITE.fileInput);
         }
+      }
+    }
+
+    if (!fileInput && SITE.uploadNewItem) {
+      for (const item of document.querySelectorAll(SITE.uploadNewItem)) {
+        if (item.textContent.trim().toLowerCase().includes('upload')) { item.click(); break; }
+      }
+      for (let i = 0; i < RETRY_ATTEMPTS && !fileInput; i++) {
+        await delay(RETRY_DELAY_MS);
+        fileInput = document.querySelector(SITE.fileInput);
       }
     }
 
@@ -271,19 +314,12 @@
     }
 
     const dt = new DataTransfer();
-    filesQueue
-      .slice()
-      .sort((a, b) => a.order - b.order)
-      .forEach(({ file }) => dt.items.add(file));
-
+    getSorted().forEach(({ file }) => dt.items.add(file));
     fileInput.files = dt.files;
     fileInput.dispatchEvent(new Event('change', { bubbles: true }));
 
     setStatus('Done! ✅', 'success');
-    setTimeout(() => {
-      setStatus('');
-      btn.disabled = false;
-    }, SUCCESS_RESET_MS);
+    setTimeout(() => { setStatus(''); btn.disabled = false; }, SUCCESS_RESET_MS);
   }
 
   function setStatus(text, type = '') {
